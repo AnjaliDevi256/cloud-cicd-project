@@ -99,3 +99,48 @@ jobs:
 
           echo "Staging health or version verification failed."
           exit 1
+
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Trigger Production Deployment
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_PRODUCTION_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "Production deploy hook secret is missing."
+            exit 1
+          fi
+
+          curl --fail --show-error --silent \
+            --request POST "$DEPLOY_HOOK"
+
+      - name: Wait for Production Deployment
+        run: sleep 60
+
+      - name: Verify Production Health
+        env:
+          PRODUCTION_URL: https://cloud-cicd-project-nuue.onrender.com
+        run: |
+          for attempt in $(seq 1 30); do
+            if response=$(curl --fail --silent \
+              --show-error --max-time 10 \
+              "${PRODUCTION_URL%/}/health"); then
+
+              if echo "$response" | jq -e \
+                '.status == "healthy"' > /dev/null; then
+                echo "Production health check passed."
+                echo "$response"
+                exit 0
+              fi
+            fi
+
+            echo "Production check attempt $attempt failed; retrying in 10 seconds."
+            sleep 10
+          done
+
+          echo "Production health check failed."
+          exit 1
