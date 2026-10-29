@@ -1,3 +1,4 @@
+
 name: Node.js CI Pipeline
 
 on:
@@ -6,7 +7,7 @@ on:
       - main
 
 jobs:
-  build-and-test:
+  build-test-and-publish:
     runs-on: ubuntu-latest
 
     steps:
@@ -38,3 +39,46 @@ jobs:
 
       - name: Push Docker Image
         run: docker push anjali256/cloud-cicd-app:latest
+
+  deploy-staging:
+    needs: build-test-and-publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Staging Deployment
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_STAGING_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "Staging deploy hook secret is missing."
+            exit 1
+          fi
+          curl --fail --show-error --silent \
+            --request POST "$DEPLOY_HOOK"
+
+      - name: Wait for Deployment Startup
+        run: sleep 60
+
+      - name: Verify Staging Health
+        env:
+          STAGING_URL: ${{ secrets.RENDER_STAGING_URL }}
+        run: |
+          if [ -z "$STAGING_URL" ]; then
+            echo "Staging URL secret is missing."
+            exit 1
+          fi
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error \
+              --max-time 10 "${STAGING_URL%/}/health"; then
+              echo
+              echo "Staging health check passed."
+              exit 0
+            fi
+
+            echo "Health check attempt $attempt failed; retrying in 10 seconds."
+            sleep 10
+          done
+
+          echo "Staging health check failed."
+          exit 1
